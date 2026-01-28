@@ -101,6 +101,7 @@ export default function App() {
     isLoadingRemoteWorkspaces,
     workspaceServers,
     connectedServerConfigs,
+    selectedServerEntry,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -230,6 +231,10 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  const selectedServerId =
+    appState.selectedServer !== "none" ? appState.selectedServer : undefined;
+  const selectedServerName = selectedServerEntry?.name;
+
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
@@ -299,38 +304,43 @@ export default function App() {
             <div className="h-full overflow-hidden">
               <ToolsTab
                 serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
+                serverId={selectedServerId}
+                serverName={selectedServerName}
               />
             </div>
           )}
           {activeTab === "evals" && (
-            <EvalsTab selectedServer={appState.selectedServer} />
+            <EvalsTab selectedServer={selectedServerId} />
           )}
           {activeTab === "resources" && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
+              serverName={selectedServerName}
             />
           )}
 
           {activeTab === "resource-templates" && (
             <ResourceTemplatesTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
+              serverName={selectedServerName}
             />
           )}
 
           {activeTab === "prompts" && (
             <PromptsTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
+              serverName={selectedServerName}
             />
           )}
 
           <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
             <TasksTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
+              serverName={selectedServerName}
               isActive={activeTab === "tasks"}
             />
           </div>
@@ -338,15 +348,15 @@ export default function App() {
           {activeTab === "auth" && (
             <AuthTab
               serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
+              serverEntry={selectedServerEntry}
+              serverName={selectedServerName}
             />
           )}
 
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
-              serverConfigs={appState.servers}
-              selectedServerName={appState.selectedServer}
+              serverConfigs={workspaceServers}
+              selectedServerId={selectedServerId ?? "none"}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
               onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -356,7 +366,7 @@ export default function App() {
           {activeTab === "chat-v2" && (
             <ChatTabV2
               connectedServerConfigs={connectedServerConfigs}
-              selectedServerNames={appState.selectedMultipleServers}
+              selectedServerIds={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />
           )}
@@ -364,7 +374,8 @@ export default function App() {
           {activeTab === "app-builder" && (
             <UIPlaygroundTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
+              serverName={selectedServerName}
             />
           )}
           {activeTab === "settings" && <SettingsTab />}
