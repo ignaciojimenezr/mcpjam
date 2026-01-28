@@ -446,17 +446,19 @@ export function ServersTab({
 
           {/* Server Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-            {Object.entries(connectedServerConfigs).map(([serverId, server]) => (
-              <ServerConnectionCard
-                key={serverId}
-                server={server}
-                onDisconnect={onDisconnect}
-                onReconnect={onReconnect}
-                onEdit={handleEditServer}
-                onRemove={onRemove}
-                sharedTunnelUrl={tunnelUrl}
-              />
-            ))}
+            {Object.entries(connectedServerConfigs).map(
+              ([serverId, server]) => (
+                <ServerConnectionCard
+                  key={serverId}
+                  server={server}
+                  onDisconnect={onDisconnect}
+                  onReconnect={onReconnect}
+                  onEdit={handleEditServer}
+                  onRemove={onRemove}
+                  sharedTunnelUrl={tunnelUrl}
+                />
+              ),
+            )}
           </div>
         </div>
       </ResizablePanel>

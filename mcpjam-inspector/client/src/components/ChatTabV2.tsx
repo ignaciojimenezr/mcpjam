@@ -92,8 +92,7 @@ export function ChatTabV2({
   const selectedConnectedServerIds = useMemo(
     () =>
       selectedServerIds.filter(
-        (id) =>
-          connectedServerConfigs[id]?.connectionStatus === "connected",
+        (id) => connectedServerConfigs[id]?.connectionStatus === "connected",
       ),
     [selectedServerIds, connectedServerConfigs],
   );
