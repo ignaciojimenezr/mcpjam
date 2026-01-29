@@ -14,6 +14,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
@@ -32,8 +33,8 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 
 interface ChatTabProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
-  selectedServerIds: string[];
+  connectedServerConfigs: Record<ServerId, ServerWithName>;
+  selectedServerIds: ServerId[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 

@@ -35,6 +35,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 
 // Define sections with their respective items
 const navigationSections = [
@@ -134,7 +135,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
   /** Servers to check for app capabilities */
-  servers?: Record<string, ServerWithName>;
+  servers?: Record<ServerId, ServerWithName>;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -153,17 +154,17 @@ export function MCPSidebar({
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
 
-  // Get list of connected server names
-  const connectedServerNames = useMemo(() => {
+  // Get list of connected server IDs
+  const connectedServerIds = useMemo(() => {
     return Object.entries(servers)
       .filter(([, server]) => server.connectionStatus === "connected")
-      .map(([name]) => name);
+      .map(([id]) => id);
   }, [servers]);
 
   // Fetch tools data for connected servers
   useEffect(() => {
     const fetchToolsData = async () => {
-      if (connectedServerNames.length === 0) {
+      if (connectedServerIds.length === 0) {
         setToolsDataMap({});
         return;
       }
@@ -174,12 +175,12 @@ export function MCPSidebar({
       > = {};
 
       await Promise.all(
-        connectedServerNames.map(async (serverName) => {
+        connectedServerIds.map(async (serverId) => {
           try {
-            const result = await listTools(serverName);
-            newToolsDataMap[serverName] = result;
+            const result = await listTools(serverId);
+            newToolsDataMap[serverId] = result;
           } catch {
-            newToolsDataMap[serverName] = null;
+            newToolsDataMap[serverId] = null;
           }
         }),
       );
@@ -188,7 +189,7 @@ export function MCPSidebar({
     };
 
     fetchToolsData();
-  }, [connectedServerNames.join(",")]);
+  }, [connectedServerIds.join(",")]);
 
   // Check if any connected server is an app
   const hasAppServer = useMemo(() => {
