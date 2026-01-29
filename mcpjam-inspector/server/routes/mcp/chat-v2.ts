@@ -11,12 +11,18 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
 import zodToJsonSchema from "zod-to-json-schema";
+import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { logger } from "../../utils/logger";
-import { ModelMessage } from "@ai-sdk/provider-utils";
+import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import {
+  scrubChatGPTAppsToolResultsForBackend,
+  scrubMcpAppsToolResultsForBackend,
+} from "../../utils/chat-helpers";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -44,6 +50,19 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
     const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
+
+    // Get skill tools and system prompt section
+    const { tools: skillTools, systemPromptSection: skillsPromptSection } =
+      await getSkillToolsAndPrompt();
+
+    // Merge MCP tools with skill tools
+    const allTools = { ...mcpTools, ...skillTools };
+
+    // Append skills section to system prompt
+    const enhancedSystemPrompt = systemPrompt
+      ? systemPrompt + skillsPromptSection
+      : skillsPromptSection;
+
     const resolvedTemperature = isGPT5Model(modelDefinition.id)
       ? undefined
       : (temperature ?? DEFAULT_TEMPERATURE);
@@ -57,8 +76,8 @@ chatV2.post("/", async (c) => {
         );
       }
 
-      // Build tool defs once from MCP tools
-      const flattenedTools = mcpTools as Record<string, any>;
+      // Build tool defs from all tools (MCP + skill tools)
+      const flattenedTools = allTools as Record<string, any>;
       const toolDefs: Array<{
         name: string;
         description?: string;
@@ -67,7 +86,8 @@ chatV2.post("/", async (c) => {
       for (const [name, tool] of Object.entries(flattenedTools)) {
         if (!tool) continue;
         let serializedSchema: Record<string, unknown> | undefined;
-        const schema = (tool as any).inputSchema;
+        // AI SDK tools use 'parameters' (Zod schema), MCP tools use 'inputSchema' (JSON Schema)
+        const schema = (tool as any).parameters ?? (tool as any).inputSchema;
         if (schema) {
           if (
             typeof schema === "object" &&
@@ -80,10 +100,23 @@ chatV2.post("/", async (c) => {
             >;
           } else {
             try {
-              serializedSchema = zodToJsonSchema(schema) as Record<
-                string,
-                unknown
-              >;
+              // Zod v4 introduced a built-in toJSONSchema() method on the z namespace,
+              // while Zod v3 requires the external zod-to-json-schema library.
+              // We detect the version at runtime by checking if z.toJSONSchema exists,
+              // since the project may use either version depending on dependencies.
+              const toJSONSchema = (z as any).toJSONSchema;
+              if (typeof toJSONSchema === "function") {
+                serializedSchema = toJSONSchema(schema) as Record<
+                  string,
+                  unknown
+                >;
+              } else {
+                // Fall back to zod-to-json-schema for Zod v3
+                serializedSchema = zodToJsonSchema(schema) as Record<
+                  string,
+                  unknown
+                >;
+              }
             } catch {
               serializedSchema = {
                 type: "object",
@@ -108,7 +141,16 @@ chatV2.post("/", async (c) => {
 
       // Driver loop that emits AI UIMessage chunks (compatible with DefaultChatTransport)
       const authHeader = c.req.header("authorization") || undefined;
-      let messageHistory = await convertToModelMessages(messages);
+      let messageHistory = scrubMcpAppsToolResultsForBackend(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+        mcpClientManager,
+        selectedServers,
+      );
+      messageHistory = scrubChatGPTAppsToolResultsForBackend(
+        messageHistory,
+        mcpClientManager,
+        selectedServers,
+      );
       let steps = 0;
       const MAX_STEPS = 20;
 
@@ -125,9 +167,19 @@ chatV2.post("/", async (c) => {
               },
               body: JSON.stringify({
                 mode: "step",
-                messages: JSON.stringify(messageHistory),
+                messages: JSON.stringify(
+                  scrubChatGPTAppsToolResultsForBackend(
+                    scrubMcpAppsToolResultsForBackend(
+                      messageHistory,
+                      mcpClientManager,
+                      selectedServers,
+                    ),
+                    mcpClientManager,
+                    selectedServers,
+                  ),
+                ),
                 model: String(modelDefinition.id),
-                systemPrompt,
+                systemPrompt: enhancedSystemPrompt,
                 ...(resolvedTemperature == undefined
                   ? {}
                   : { temperature: resolvedTemperature }),
@@ -220,10 +272,11 @@ chatV2.post("/", async (c) => {
                 }
               }
 
+              // Use allTools which includes both MCP tools and skill tools
               await executeToolCallsFromMessages(
                 messageHistory as ModelMessage[],
                 {
-                  clientManager: mcpClientManager,
+                  tools: allTools as Record<string, any>,
                 },
               );
             }
@@ -235,7 +288,9 @@ chatV2.post("/", async (c) => {
                     writer.write({
                       type: "tool-output-available",
                       toolCallId: item.toolCallId,
-                      output: item.output ?? item.result ?? item.value,
+                      // Prefer full result (with _meta/structuredContent) for the UI;
+                      // the scrubbed output stays in messageHistory for the LLM.
+                      output: item.result ?? item.output ?? item.value,
                     } as any);
                   }
                 }
@@ -272,12 +327,20 @@ chatV2.post("/", async (c) => {
 
     const result = streamText({
       model: llmModel,
-      messages: await convertToModelMessages(messages),
+      messages: scrubChatGPTAppsToolResultsForBackend(
+        scrubMcpAppsToolResultsForBackend(
+          (await convertToModelMessages(messages)) as ModelMessage[],
+          mcpClientManager,
+          selectedServers,
+        ),
+        mcpClientManager,
+        selectedServers,
+      ),
       ...(resolvedTemperature == undefined
         ? {}
         : { temperature: resolvedTemperature }),
-      system: systemPrompt,
-      tools: mcpTools as ToolSet,
+      system: enhancedSystemPrompt,
+      tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
     });
 

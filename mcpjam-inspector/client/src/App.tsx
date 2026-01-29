@@ -5,6 +5,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
+import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
@@ -331,6 +332,8 @@ export default function App() {
               serverId={selectedServerId}
             />
           )}
+
+          {activeTab === "skills" && <SkillsTab />}
 
           {selectedServerId && (
             <div className={activeTab === "tasks" ? "h-full" : "hidden"}>

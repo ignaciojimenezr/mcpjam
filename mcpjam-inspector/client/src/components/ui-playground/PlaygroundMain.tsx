@@ -51,6 +51,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
   useUIPlaygroundStore,
   DEVICE_VIEWPORT_CONFIGS,
@@ -255,6 +256,7 @@ export function PlaygroundMain({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [modelContextQueue, setModelContextQueue] = useState<
     {
       toolCallId: string;
@@ -566,6 +568,8 @@ export function PlaygroundMain({
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    skillResults,
+    onChangeSkillResults: setSkillResults,
     compact: isCompact,
   };
 

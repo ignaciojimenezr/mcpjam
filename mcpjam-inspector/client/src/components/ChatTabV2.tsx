@@ -16,16 +16,17 @@ import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerId } from "@/state/app-types";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
   STARTER_PROMPTS,
   formatErrorMessage,
   buildMcpPromptMessages,
+  buildSkillToolMessages,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
@@ -71,6 +72,7 @@ export function ChatTabV2({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
@@ -97,7 +99,6 @@ export function ChatTabV2({
       ),
     [selectedServerIds, connectedServerConfigs],
   );
-  const noServersConnected = selectedConnectedServerIds.length === 0;
 
   // Use shared chat session hook
   const {
@@ -353,23 +354,19 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked || noServersConnected;
+  const submitBlocked = baseSubmitBlocked;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder = 'Ask something… Use Slash "/" commands for MCP prompts';
-  if (noServersConnected) {
-    placeholder = "Connect an MCP server to send your first message";
-  } else if (isAuthLoading) {
+  let placeholder =
+    'Ask something… Use Slash "/" commands for Skills & MCP prompts';
+  if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
     placeholder = "Sign in to use free chat";
   }
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
-  const shouldShowConnectCallout =
-    noServersConnected && !shouldShowUpsell && !isAuthLoading;
-  const showDisabledCallout =
-    isThreadEmpty && (shouldShowUpsell || shouldShowConnectCallout);
+  const showDisabledCallout = isThreadEmpty && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
 
@@ -384,11 +381,8 @@ export function ChatTabV2({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (
-      (input.trim() || mcpPromptResults.length > 0) &&
-      status === "ready" &&
-      !submitBlocked
-    ) {
+    const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0;
+    if ((input.trim() || hasResults) && status === "ready" && !submitBlocked) {
       posthog.capture("send_message", {
         location: "chat_tab",
         platform: detectPlatform(),
@@ -397,9 +391,17 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
+
+      // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(mcpPromptResults);
       if (promptMessages.length > 0) {
         setMessages((prev) => [...prev, ...promptMessages]);
+      }
+
+      // Build messages from skills
+      const skillMessages = buildSkillToolMessages(skillResults);
+      if (skillMessages.length > 0) {
+        setMessages((prev) => [...prev, ...skillMessages]);
       }
 
       // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
@@ -428,6 +430,7 @@ export function ChatTabV2({
       sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
+      setSkillResults([]);
       setModelContextQueue([]); // Clear after sending
     }
   };
@@ -478,6 +481,8 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    skillResults,
+    onChangeSkillResults: setSkillResults,
   };
 
   const showStarterPrompts =
@@ -512,11 +517,7 @@ export function ChatTabV2({
                     </div>
                   ) : showDisabledCallout ? (
                     <div className="space-y-4">
-                      {shouldShowUpsell ? (
-                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                      ) : (
-                        <ConnectMcpServerCallout />
-                      )}
+                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
                     </div>
                   ) : null}
 
