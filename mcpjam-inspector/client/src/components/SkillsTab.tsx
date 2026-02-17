@@ -17,6 +17,7 @@ import {
   Code,
   Eye,
 } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -46,6 +47,7 @@ import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 export function SkillsTab() {
+  const posthog = usePostHog();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -186,6 +188,7 @@ export function SkillsTab() {
     setIsDeleting(true);
     try {
       await deleteSkill(skillToDelete);
+      posthog.capture("skill_deleted", { skill_name: skillToDelete });
       // Refresh skills list
       await fetchSkills();
       // Clear selection if deleted skill was selected
@@ -217,9 +220,10 @@ export function SkillsTab() {
   const handleSelectSkill = (name: string) => {
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
-    setFileContent(null);
     setRawMode(false);
     setDescriptionExpanded(false);
+    posthog.capture("skill_viewed", { skill_name: name });
+    fetchFileContent(name, "SKILL.md");
   };
 
   const handleSelectFile = (skillName: string, filePath: string) => {
@@ -228,6 +232,7 @@ export function SkillsTab() {
     }
     setSelectedFilePath(filePath);
     setRawMode(false);
+    fetchFileContent(skillName, filePath);
   };
 
   const handleExpandSkill = (name: string) => {

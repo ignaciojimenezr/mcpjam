@@ -11,6 +11,7 @@ import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpe
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 export function MessageView({
   message,
@@ -29,6 +30,9 @@ export function MessageView({
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
+  toolRenderOverrides,
+  showSaveViewButton = true,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -52,6 +56,9 @@ export function MessageView({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  toolRenderOverrides?: Record<string, ToolRenderOverride>;
+  showSaveViewButton?: boolean;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -63,32 +70,75 @@ export function MessageView({
   if (role !== "user" && role !== "assistant") return null;
 
   if (role === "user") {
+    // Separate file parts from other parts - files render above the bubble
+    const fileParts =
+      message.parts?.filter((part) => part.type === "file") ?? [];
+    const otherParts =
+      message.parts?.filter((part) => part.type !== "file") ?? [];
+
     return (
-      <UserMessageBubble>
-        {message.parts?.map((part, i) => (
-          <PartSwitch
-            key={i}
-            part={part}
-            role={role}
-            onSendFollowUp={onSendFollowUp}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            onWidgetStateChange={onWidgetStateChange}
-            onModelContextUpdate={onModelContextUpdate}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
-            }
-          />
-        ))}
-      </UserMessageBubble>
+      <div className="flex flex-col items-end gap-2">
+        {/* File attachments above the bubble */}
+        {fileParts.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2 max-w-3xl">
+            {fileParts.map((part, i) => (
+              <PartSwitch
+                key={`file-${i}`}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
+                pipWidgetId={pipWidgetId}
+                fullscreenWidgetId={fullscreenWidgetId}
+                onRequestPip={onRequestPip}
+                onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
+              />
+            ))}
+          </div>
+        )}
+        {/* Text and other parts inside the bubble */}
+        {(otherParts.length > 0 || fileParts.length === 0) && (
+          <UserMessageBubble>
+            {otherParts.map((part, i) => (
+              <PartSwitch
+                key={i}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
+                pipWidgetId={pipWidgetId}
+                fullscreenWidgetId={fullscreenWidgetId}
+                onRequestPip={onRequestPip}
+                onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
+              />
+            ))}
+          </UserMessageBubble>
+        )}
+      </div>
     );
   }
 
@@ -131,6 +181,10 @@ export function MessageView({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
+                onToolApprovalResponse={onToolApprovalResponse}
+                messageParts={message.parts}
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
               />
             ))}
           </div>

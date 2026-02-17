@@ -28,7 +28,7 @@ MCPJam implements SEP-1865 (MCP Apps) to render interactive user interfaces from
                                                      ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              Sandbox Proxy (Different Origin)                   │
-│              /api/mcp/sandbox-proxy (sandbox-proxy.html)        │
+│              /api/apps/mcp-apps/sandbox-proxy (sandbox-proxy.html)        │
 │                                                                 │
 │  1. Creates inner iframe                                        │
 │  2. Receives HTML via ui/notifications/sandbox-resource-ready   │
@@ -128,9 +128,9 @@ When `uiType === UIType.MCP_APPS`, the `MCPAppsRenderer` component is rendered:
 Once `toolState === "output-available"`, the renderer fetches the widget HTML:
 
 ```typescript
-// mcp-apps-renderer.tsx:348-374
-// 1. Store widget data
-const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
+// mcp-apps-renderer.tsx
+// Single request for widget content + runtime config context
+const contentResponse = await authFetch("/api/apps/mcp-apps/widget-content", {
   method: "POST",
   body: JSON.stringify({
     serverId,
@@ -140,15 +140,10 @@ const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
     toolId: toolCallId,
     toolName,
     theme: themeMode,
-    protocol: "mcp-apps",
     cspMode,
   }),
 });
 
-// 2. Fetch widget content with CSP metadata
-const contentResponse = await fetch(
-  `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
-);
 const { html, csp, permissions, permissive, prefersBorder } =
   await contentResponse.json();
 ```
@@ -200,7 +195,7 @@ const [sandboxProxyUrl] = useState(() => {
   } else if (currentHost === "127.0.0.1") {
     sandboxHost = "localhost";
   }
-  return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy`;
+  return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy`;
 });
 ```
 
@@ -347,7 +342,6 @@ The host responds with `McpUiInitializeResult`:
   hostContext: {
     theme: "dark",
     displayMode: "inline",
-    containerDimensions: { maxHeight: 800, maxWidth: 1200 },
     locale: "en-US",
     timeZone: "America/New_York",
     platform: "web",
@@ -586,10 +580,10 @@ Host                    Sandbox Proxy              Guest UI
 
 ### Guest UI → Host Notifications
 
-| Message                         | Description                            |
-| ------------------------------- | -------------------------------------- |
-| `ui/notifications/initialized`  | Guest UI is ready                      |
-| `ui/notifications/size-changed` | Content size changed (for auto-resize) |
+| Message                         | Description                              |
+| ------------------------------- | ---------------------------------------- |
+| `ui/notifications/initialized`  | Guest UI is ready                        |
+| `ui/notifications/size-changed` | Content height changed (for auto-resize) |
 
 ---
 
@@ -602,7 +596,6 @@ interface McpUiHostContext {
   theme?: "light" | "dark";
   displayMode?: "inline" | "fullscreen" | "pip";
   availableDisplayModes?: string[];
-  containerDimensions?: { maxHeight?: number; maxWidth?: number };
   locale?: string; // BCP 47, e.g., "en-US"
   timeZone?: string; // IANA, e.g., "America/New_York"
   userAgent?: string;
@@ -619,6 +612,8 @@ interface McpUiHostContext {
   };
 }
 ```
+
+For this host implementation, `containerDimensions` is intentionally omitted and inline app width remains host-controlled (`w-full`). Width values from `ui/notifications/size-changed` are ignored; only height is applied.
 
 ---
 

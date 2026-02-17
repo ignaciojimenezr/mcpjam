@@ -1,7 +1,7 @@
 import Ajv from "ajv";
 import type { ErrorObject } from "ajv";
 
-const ajv = new Ajv();
+const ajv = new Ajv({ strict: false });
 
 export type UnstructuredValidationStatus =
   | "not_applicable"

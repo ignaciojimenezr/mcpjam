@@ -24,10 +24,11 @@ function getProviderDisplayName(provider: string): string {
     ollama: "Ollama",
     meta: "Meta",
     xai: "xAI",
-    litellm: "LiteLLM",
+    custom: "Custom Provider",
     moonshotai: "Moonshot AI",
     "z-ai": "Zhipu AI",
     openrouter: "OpenRouter",
+    minimax: "MiniMax",
   };
 
   return providerMap[provider] || provider;

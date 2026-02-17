@@ -13,11 +13,11 @@ import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
-import litellmLogo from "/litellm_logo.png";
 import openrouterLogo from "/openrouter_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
+import minimaxLogo from "/minimax_logo.svg";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -59,8 +59,8 @@ export const getProviderLogoFromProvider = (
         return isDark ? grokDarkLogo : grokLightLogo;
       }
       return grokLightLogo;
-    case "litellm":
-      return litellmLogo;
+    case "custom":
+      return null;
     case "openrouter":
       return openrouterLogo;
     case "moonshotai":
@@ -74,6 +74,8 @@ export const getProviderLogoFromProvider = (
       return moonshotLightLogo;
     case "z-ai":
       return zAiLogo;
+    case "minimax":
+      return minimaxLogo;
     default:
       return null;
   }
@@ -104,12 +106,14 @@ export const getProviderColor = (provider: string) => {
       return "text-purple-600 dark:text-purple-400";
     case "azure":
       return "text-purple-600 dark:text-purple-400";
-    case "litellm":
-      return "bg-gradient-to-br from-blue-500 to-purple-600";
+    case "custom":
+      return "bg-gradient-to-br from-teal-500 to-cyan-600";
     case "moonshotai":
       return "text-cyan-600 dark:text-cyan-400";
     case "z-ai":
       return "text-indigo-600 dark:text-indigo-400";
+    case "minimax":
+      return "text-pink-600 dark:text-pink-400";
     case "meta":
       return "text-blue-500 dark:text-blue-400";
     default:
@@ -135,9 +139,22 @@ export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   },
 ];
 
-export function formatErrorMessage(
-  error: unknown,
-): { message: string; details?: string } | null {
+export interface FormattedError {
+  message: string;
+  details?: string;
+  code?: string;
+  statusCode?: number;
+  isRetryable?: boolean;
+  isMCPJamPlatformError?: boolean;
+}
+
+const MCPJAM_PLATFORM_CODES = [
+  "mcpjam_rate_limit",
+  "mcpjam_api_error",
+  "mcpjam_config_error",
+];
+
+export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
   let errorString: string;
@@ -153,13 +170,23 @@ export function formatErrorMessage(
     }
   }
 
-  // Try to parse as JSON to extract message and details
+  // Try to parse as JSON to extract structured error
   try {
     const parsed = JSON.parse(errorString);
-    if (parsed && typeof parsed === "object" && parsed.message) {
+    if (parsed && typeof parsed === "object") {
+      // Handle structured error with code
+      const code = parsed.code;
+      const message = parsed.error || parsed.message || "An error occurred";
+
       return {
-        message: parsed.message,
+        message,
         details: parsed.details,
+        code,
+        statusCode: parsed.statusCode,
+        isRetryable: parsed.isRetryable,
+        isMCPJamPlatformError: code
+          ? MCPJAM_PLATFORM_CODES.includes(code)
+          : false,
       };
     }
   } catch {

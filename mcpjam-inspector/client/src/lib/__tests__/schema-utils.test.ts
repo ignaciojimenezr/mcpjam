@@ -166,6 +166,92 @@ describe("validateToolOutput", () => {
     });
   });
 
+  describe("non-JSON-Schema keywords", () => {
+    it("ignores x- vendor extension keys", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          result: { type: "number" },
+        },
+        required: ["result"],
+        "x-fastmcp-wrap-result": true,
+      };
+
+      const result = {
+        content: [{ type: "text", text: '{"result": 6}' }],
+        structuredContent: { result: 6 },
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.structuredErrors).toBeNull();
+      expect(report.unstructuredStatus).toBe("valid");
+    });
+
+    it("ignores OpenAPI 'example' keyword", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          name: { type: "string", example: "John" },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            example: "2022-03-10T04:01:12Z",
+          },
+        },
+        required: ["name"],
+      };
+
+      const result = {
+        content: [
+          {
+            type: "text",
+            text: '{"name": "Alice", "createdAt": "2024-01-01T00:00:00Z"}',
+          },
+        ],
+        structuredContent: {
+          name: "Alice",
+          createdAt: "2024-01-01T00:00:00Z",
+        },
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.structuredErrors).toBeNull();
+      expect(report.unstructuredStatus).toBe("valid");
+    });
+
+    it("ignores nested non-JSON-Schema keywords in complex schemas", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          data: { type: "string", "x-custom-annotation": "hello" },
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", example: "abc-123" },
+              },
+            },
+            description: "List of items",
+            example: "e.g. a list of records",
+          },
+        },
+        "x-vendor-info": { version: 2 },
+      };
+
+      const result = {
+        content: [
+          { type: "text", text: '{"data": "test", "items": [{"id": "1"}]}' },
+        ],
+        structuredContent: { data: "test", items: [{ id: "1" }] },
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.structuredErrors).toBeNull();
+      expect(report.unstructuredStatus).toBe("valid");
+    });
+  });
+
   describe("edge cases", () => {
     it("throws when content array is empty (accessing undefined index)", () => {
       const result = { content: [] };

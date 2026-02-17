@@ -7,14 +7,14 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
-  HandMetal,
   Workflow,
-  FileCode,
-  Activity,
-  Fish,
+  Anvil,
+  Layers,
   ListTodo,
   SquareSlash,
+  MessageCircleQuestionIcon,
 } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -26,6 +26,8 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { useUpdateNotification } from "@/hooks/useUpdateNotification";
+import { Button } from "@/components/ui/button";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -52,11 +54,6 @@ const navigationSections = [
         url: "#chat-v2",
         icon: MessageCircle,
       },
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: SquareSlash,
-      },
     ],
   },
   {
@@ -65,13 +62,38 @@ const navigationSections = [
       {
         title: "App Builder",
         url: "#app-builder",
-        icon: Fish,
+        icon: Anvil,
+      },
+      {
+        title: "Views",
+        url: "#views",
+        icon: Layers,
       },
       {
         title: "Test Cases",
         url: "#evals",
         icon: FlaskConical,
       },
+    ],
+  },
+  {
+    id: "others",
+    items: [
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: SquareSlash,
+      },
+      {
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: Workflow,
+      },
+      // {
+      //   title: "Tracing",
+      //   url: "#tracing",
+      //   icon: Activity,
+      // },
     ],
   },
   {
@@ -88,11 +110,6 @@ const navigationSections = [
         icon: BookOpen,
       },
       {
-        title: "Resource Templates",
-        url: "#resource-templates",
-        icon: FileCode,
-      },
-      {
         title: "Prompts",
         url: "#prompts",
         icon: MessageSquareCode,
@@ -105,27 +122,12 @@ const navigationSections = [
     ],
   },
   {
-    id: "others",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
-    ],
-  },
-  {
     id: "settings",
     items: [
       {
-        title: "Feedback",
-        url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: HandMetal,
+        title: "Support",
+        url: "#support",
+        icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
@@ -151,7 +153,9 @@ export function MCPSidebar({
   servers = {},
   ...props
 }: MCPSidebarProps) {
+  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
     Record<string, ListToolsResultWithMetadata | null>
   >({});
@@ -182,7 +186,7 @@ export function MCPSidebar({
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const result = await listTools(serverName);
+            const result = await listTools({ serverId: serverName });
             newToolsDataMap[serverName] = result;
           } catch {
             newToolsDataMap[serverName] = null;
@@ -217,6 +221,10 @@ export function MCPSidebar({
         localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
         setHasVisitedAppBuilder(true);
       }
+      // Track skills tab opened
+      if (section === "skills") {
+        posthog.capture("skills_tab_opened");
+      }
       onNavigate(section);
     } else {
       window.open(url, "_blank");
@@ -245,6 +253,17 @@ export function MCPSidebar({
             className="h-4 w-auto"
           />
         </button>
+        {updateReady && (
+          <div className="px-2 pb-2">
+            <Button
+              size="sm"
+              onClick={restartAndInstall}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+            >
+              Update & Restart
+            </Button>
+          </div>
+        )}
       </SidebarHeader>
       <SidebarContent>
         {navigationSections.map((section, sectionIndex) => (

@@ -430,7 +430,7 @@ export class MCPClientManager {
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
-    options: { schemas?: ToolSchemaOverrides | "automatic" } = {}
+    options: { schemas?: ToolSchemaOverrides | "automatic"; needsApproval?: boolean } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
@@ -446,6 +446,7 @@ export class MCPClientManager {
 
           const tools = await convertMCPToolsToVercelTools(listToolsResult, {
             schemas: options.schemas,
+            needsApproval: options.needsApproval,
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
@@ -632,6 +633,12 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
+
+    // Skip if server doesn't advertise prompts capability
+    const capabilities = client.getServerCapabilities();
+    if (capabilities && !capabilities.prompts) {
+      return { prompts: [] } as Awaited<ReturnType<Client["listPrompts"]>>;
+    }
 
     try {
       return await client.listPrompts(
@@ -1185,6 +1192,7 @@ export class MCPClientManager {
     if (!capabilities.elicitation) {
       capabilities.elicitation = {};
     }
+    // Add extensions here
     return capabilities;
   }
 

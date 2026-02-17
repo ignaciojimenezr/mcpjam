@@ -109,7 +109,7 @@ export const SandboxedIframe = forwardRef<
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy?v=${Date.now()}`;
+    return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy?v=${Date.now()}`;
   });
 
   const sandboxProxyOrigin = useMemo(() => {
@@ -133,20 +133,6 @@ export const SandboxedIframe = forwardRef<
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
-      if (
-        event.data?.source !== "react-devtools-bridge" &&
-        event.data?.method
-      ) {
-        // Don't capture messages from react devtools
-        posthog.capture("mcp_apps_message_received", {
-          location: "sandboxed_iframe",
-          type: event.data?.method,
-          fullEventData: event.data,
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-        });
-      }
-
       if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
         return;
       }
@@ -154,6 +140,15 @@ export const SandboxedIframe = forwardRef<
 
       // CSP violation messages (not JSON-RPC) - forward directly
       if (event.data?.type === "mcp-apps:csp-violation") {
+        onMessage(event);
+        return;
+      }
+
+      // File upload/download messages (not JSON-RPC) - forward directly
+      if (
+        event.data?.type === "openai:uploadFile" ||
+        event.data?.type === "openai:getFileDownloadUrl"
+      ) {
         onMessage(event);
         return;
       }

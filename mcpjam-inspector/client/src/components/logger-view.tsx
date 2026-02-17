@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import {
-  ChevronDown,
   ChevronRight,
-  ArrowDownToLine,
-  ArrowUpFromLine,
+  AlertCircle,
   Search,
   Trash2,
   PanelRightClose,
   Copy,
 } from "lucide-react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,6 +90,37 @@ function normalizePayload(
   if (payload !== null && typeof payload === "object")
     return payload as Record<string, unknown>;
   return { value: payload } as Record<string, unknown>;
+}
+
+function DirectionLabel({
+  direction,
+  source,
+}: {
+  direction: string;
+  source: TrafficSource;
+}) {
+  if (source === "mcp-apps") {
+    const isHostToUi = direction === "HOST→UI";
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-purple-500">
+        {isHostToUi ? "host → view" : "view → host"}
+      </span>
+    );
+  }
+
+  const isSend = direction === "SEND";
+  return (
+    <span
+      className={cn(
+        "font-mono text-[10px] leading-none flex-shrink-0",
+        isSend
+          ? "text-green-600 dark:text-green-400"
+          : "text-blue-600 dark:text-blue-400",
+      )}
+    >
+      {isSend ? "req →" : "← res"}
+    </span>
+  );
 }
 
 export function LoggerView({
@@ -180,7 +207,7 @@ export function LoggerView({
   };
 
   const copyLogs = async () => {
-    const logsText = filteredItems.map((item) => ({
+    const logs = filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
@@ -189,7 +216,7 @@ export function LoggerView({
       payload: item.payload,
     }));
     try {
-      await navigator.clipboard.writeText(JSON.stringify(logsText, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
@@ -241,49 +268,15 @@ export function LoggerView({
     return result;
   }, [allItems, searchQuery, serverIds, sourceFilter]);
 
+  const totalItemCount = allItems.length;
+  const filteredItemCount = filteredItems.length;
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex flex-col gap-2 p-3 border-b border-border flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold text-foreground">Logs</h2>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={copyLogs}
-              disabled={filteredItems.length === 0}
-              className="h-7 w-7"
-              title="Copy logs to clipboard"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={clearMessages}
-              disabled={allItems.length === 0}
-              className="h-7 w-7"
-              title="Clear all messages"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-            {onClose && isCollapsable && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                className="h-7 w-7"
-                title="Hide JSON-RPC panel"
-              >
-                <PanelRightClose className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        </div>
-
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border flex-shrink-0">
         {isSearchVisible && (
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
+          <>
+            <div className="relative flex-1 min-w-0">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search logs"
@@ -293,7 +286,7 @@ export function LoggerView({
               />
             </div>
             <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline-block">
-              {filteredItems.length} / {allItems.length}
+              {filteredItemCount} / {totalItemCount}
             </span>
 
             {/* Source Filter */}
@@ -416,15 +409,47 @@ export function LoggerView({
                 </PopoverContent>
               </Popover>
             )}
-          </div>
+          </>
+        )}
+
+        {/* Push action buttons to the right when search is hidden */}
+        {!isSearchVisible && <div className="flex-1" />}
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={copyLogs}
+          disabled={filteredItemCount === 0}
+          className="h-7 w-7 flex-shrink-0"
+          title="Copy logs to clipboard"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={clearMessages}
+          disabled={totalItemCount === 0}
+          className="h-7 w-7 flex-shrink-0"
+          title="Clear all messages"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+        {onClose && isCollapsable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-7 w-7 flex-shrink-0"
+            title="Hide JSON-RPC panel"
+          >
+            <PanelRightClose className="h-3.5 w-3.5" />
+          </Button>
         )}
       </div>
 
-      <div
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3"
-      >
-        {filteredItems.length === 0 ? (
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+        {filteredItemCount === 0 ? (
           <div className="text-center py-8">
             <div className="text-xs text-muted-foreground">{"No logs yet"}</div>
             <div className="text-[10px] text-muted-foreground mt-1">
@@ -432,91 +457,87 @@ export function LoggerView({
             </div>
           </div>
         ) : (
-          filteredItems.map((it) => {
-            const isExpanded = expanded.has(it.id);
-            const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
-            const isIncoming =
-              it.direction === "RECEIVE" || it.direction === "UI→HOST";
+          <>
+            {filteredItems.map((it) => {
+              const isExpanded = expanded.has(it.id);
+              const isAppsTraffic = it.source === "mcp-apps";
 
-            // Border color: purple for Apps traffic, none for MCP Server
-            const borderClass = isAppsTraffic
-              ? "border-l-4 border-l-purple-500/50"
-              : "";
+              const isError =
+                it.method === "error" || it.method === "csp-violation";
 
-            return (
-              <div
-                key={it.id}
-                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
-              >
+              // Left border: 2px — red for errors, purple for Apps, transparent for MCP Server
+              const borderClass = isError
+                ? "border-l-destructive"
+                : isAppsTraffic
+                  ? "border-l-purple-500/50"
+                  : "border-l-transparent";
+
+              return (
                 <div
-                  className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => toggleExpanded(it.id)}
+                  key={it.id}
+                  className={cn(
+                    "border-b border-border border-l-2",
+                    borderClass,
+                    isError && "bg-destructive/5",
+                    isExpanded && "bg-muted/20",
+                  )}
                 >
-                  <div className="flex-shrink-0">
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50 whitespace-nowrap">
-                      {it.serverId}
-                    </span>
-                    {/* Direction indicator */}
-                    <span
-                      className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                        isIncoming
-                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                          : "bg-green-500/10 text-green-600 dark:text-green-400"
-                      }`}
-                      title={it.direction}
-                    >
-                      {isIncoming ? (
-                        <ArrowDownToLine className="h-3 w-3" />
-                      ) : (
-                        <ArrowUpFromLine className="h-3 w-3" />
+                  <div
+                    className="h-7 px-2 flex items-center gap-1.5 cursor-pointer select-none hover:bg-muted/30 transition-colors"
+                    onClick={() => toggleExpanded(it.id)}
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform duration-150",
+                        isExpanded && "rotate-90",
                       )}
-                    </span>
+                    />
+                    {isError ? (
+                      <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
+                    ) : (
+                      <DirectionLabel
+                        direction={it.direction}
+                        source={it.source}
+                      />
+                    )}
                     <span
-                      className="text-xs font-mono text-foreground truncate"
+                      className={cn(
+                        "flex-1 min-w-0 font-mono text-xs truncate",
+                        isError ? "text-destructive" : "text-foreground",
+                      )}
                       title={it.method}
                     >
                       {it.method}
                     </span>
-                    <span className="text-muted-foreground font-mono text-xs whitespace-nowrap ml-auto">
+                    <span
+                      className="hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]"
+                      title={it.serverId}
+                    >
+                      {it.serverId}
+                    </span>
+                    <span className="text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums">
                       {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
-                </div>
-                {isExpanded && (
-                  <div className="border-t bg-muted/20">
-                    <div className="p-3">
-                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                        <JsonView
-                          src={normalizePayload(it.payload) as object}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
+                  {isExpanded && (
+                    <div className="border-t border-border bg-muted/10 p-2">
+                      <div className="max-h-[40vh] overflow-auto">
+                        <JsonEditor
+                          height="100%"
+                          value={normalizePayload(it.payload) as object}
+                          readOnly
+                          showToolbar={false}
+                          collapsible
+                          defaultExpandDepth={2}
                           collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "transparent",
-                            padding: "0",
-                            borderRadius: "0",
-                            border: "none",
-                          }}
                         />
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>

@@ -23,8 +23,8 @@ import {
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithToolCalls,
   generateId,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -33,6 +33,7 @@ import {
   ProviderTokens,
   useAiProviderKeys,
 } from "@/hooks/use-ai-provider-keys";
+import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   buildAvailableModels,
@@ -69,7 +70,15 @@ export interface UseChatSessionReturn {
   // Chat state
   messages: UIMessage[];
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
-  sendMessage: (options: { text: string }) => void;
+  sendMessage: (options: {
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+  }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -104,6 +113,15 @@ export interface UseChatSessionReturn {
   systemPromptTokenCount: number | null;
   systemPromptTokenCountLoading: boolean;
 
+  // Tool approval
+  requireToolApproval: boolean;
+  setRequireToolApproval: (value: boolean) => void;
+  addToolApprovalResponse: (options: {
+    id: string;
+    approved: boolean;
+    reason?: string;
+  }) => void;
+
   // Actions
   resetChat: () => void;
 
@@ -131,12 +149,11 @@ export function useChatSession({
   const {
     hasToken,
     getToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
     getAzureBaseUrl,
   } = useAiProviderKeys();
+  const { customProviders, getCustomProviderByName } = useCustomProviders();
 
   // Local state
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
@@ -162,26 +179,27 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
+  const [requireToolApproval, setRequireToolApproval] = useState(false);
+  const requireToolApprovalRef = useRef(requireToolApproval);
+  requireToolApprovalRef.current = requireToolApproval;
 
   // Build available models
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
-      getLiteLLMBaseUrl,
-      getLiteLLMModelAlias,
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
+      customProviders,
     });
   }, [
     hasToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    customProviders,
   ]);
 
   // Model selection with persistence
@@ -208,42 +226,90 @@ export function useChatSession({
 
   // Create transport
   const transport = useMemo(() => {
-    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    let apiKey: string;
+    if (
+      selectedModel.provider === "custom" &&
+      selectedModel.customProviderName
+    ) {
+      // For custom providers, the API key is embedded in the provider config
+      const cp = getCustomProviderByName(selectedModel.customProviderName);
+      apiKey = cp?.apiKey || "";
+    } else {
+      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    }
     const isGpt5 = isGPT5Model(selectedModel.id);
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders };
+    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
+      string,
+      string
+    >;
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
-      body: {
+      body: () => ({
         model: selectedModel,
         apiKey: apiKey,
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         selectedServers,
-      },
+        requireToolApproval: requireToolApprovalRef.current,
+        ...(customProviders.length > 0 ? { customProviders } : {}),
+      }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
   }, [
     selectedModel,
     getToken,
+    getCustomProviderByName,
+    customProviders,
     authHeaders,
     temperature,
     systemPrompt,
     selectedServers,
+    // requireToolApproval read from ref at request time
   ]);
 
   // useChat hook
-  const { messages, sendMessage, stop, status, error, setMessages } = useChat({
+  const {
+    messages,
+    sendMessage: baseSendMessage,
+    stop,
+    status,
+    error,
+    setMessages,
+    addToolApprovalResponse,
+  } = useChat({
     id: chatSessionId,
     transport: transport!,
-    sendAutomaticallyWhen: isMcpJamModel
-      ? undefined
-      : lastAssistantMessageIsCompleteWithToolCalls,
+    sendAutomaticallyWhen: requireToolApproval
+      ? lastAssistantMessageIsCompleteWithApprovalResponses
+      : undefined,
   });
+
+  // Wrapped sendMessage that accepts FileUIPart[]
+  const sendMessage = useCallback(
+    (options: {
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+    }) => {
+      const { text, files } = options;
+      if (files && files.length > 0) {
+        // AI SDK accepts FileUIPart[] with data URLs
+        baseSendMessage({ text, files });
+      } else {
+        baseSendMessage({ text });
+      }
+    },
+    [baseSendMessage],
+  );
 
   // Reset chat
   const resetChat = useCallback(() => {
@@ -477,6 +543,11 @@ export function useChatSession({
     mcpToolsTokenCountLoading,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+
+    // Tool approval
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse,
 
     // Actions
     resetChat,

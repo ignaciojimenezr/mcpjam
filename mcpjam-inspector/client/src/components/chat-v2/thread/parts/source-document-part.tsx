@@ -1,4 +1,5 @@
-import { AnyPart, safeStringify } from "../thread-helpers";
+import { AnyPart } from "../thread-helpers";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 export function SourceDocumentPart({
   part,
@@ -8,13 +9,15 @@ export function SourceDocumentPart({
   return (
     <div className="space-y-1 text-xs">
       <div className="font-medium">📄 {part.title}</div>
-      <pre className="whitespace-pre-wrap break-words text-muted-foreground">
-        {safeStringify({
+      <JsonEditor
+        height="100%"
+        viewOnly
+        value={{
           sourceId: part.sourceId,
           mediaType: part.mediaType,
           filename: part.filename,
-        })}
-      </pre>
+        }}
+      />
     </div>
   );
 }

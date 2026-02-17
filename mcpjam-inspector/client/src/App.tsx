@@ -1,21 +1,22 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
-import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { ViewsTab } from "./components/ViewsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
+import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
+import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -41,13 +42,10 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
-import { listTools } from "./lib/apis/mcp-tools-api";
-import {
-  isMCPApp,
-  isOpenAIApp,
-  isOpenAIAppAndMCPApp,
-} from "./lib/mcp-ui/mcp-apps-utils";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -55,11 +53,22 @@ export default function App() {
     string | undefined
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
-  const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
-    Set<string>
-  >(new Set());
   const posthog = usePostHog();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const convexUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
+  const { sortedOrganizations, isLoading: isOrganizationsLoading } =
+    useOrganizationQueries({ isAuthenticated });
+
+  const shouldRequireOrganization =
+    isAuthenticated &&
+    !isAuthLoading &&
+    convexUser !== undefined &&
+    convexUser !== null &&
+    !isOrganizationsLoading &&
+    sortedOrganizations.length === 0;
 
   usePostHogIdentify();
 
@@ -101,7 +110,7 @@ export default function App() {
     isLoading,
     isLoadingRemoteWorkspaces,
     workspaceServers,
-    connectedServerConfigs,
+    connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -123,44 +132,44 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
-  // Create a stable key for connected servers to avoid infinite loops
-  // (connectedServerConfigs is a new object reference on every render)
-  const connectedServerNamesKey = useMemo(
-    () => Object.keys(connectedServerConfigs).sort().join(","),
-    [connectedServerConfigs],
+
+  // Create effective app state that uses the correct workspaces (Convex when authenticated)
+  const effectiveAppState = useMemo(
+    () => ({
+      ...appState,
+      workspaces,
+      activeWorkspaceId,
+    }),
+    [appState, workspaces, activeWorkspaceId],
   );
 
-  // Check which connected servers have OpenAI apps tools
-  useEffect(() => {
-    const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.keys(connectedServerConfigs);
-      const serversWithOpenAiAppOrMcpApps = new Set<string>();
+  // Get the Convex workspace ID from the active workspace
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
 
-      await Promise.all(
-        connectedServerNames.map(async (serverName) => {
-          try {
-            const toolsData = await listTools(serverName);
-            if (
-              isOpenAIApp(toolsData) ||
-              isMCPApp(toolsData) ||
-              isOpenAIAppAndMCPApp(toolsData)
-            ) {
-              serversWithOpenAiAppOrMcpApps.add(serverName);
-            }
-          } catch (error) {
-            console.debug(
-              `Failed to check OpenAI apps for server ${serverName}:`,
-              error,
-            );
-          }
-        }),
-      );
+  // Fetch views for the workspace to determine which servers have saved views
+  const { viewsByServer } = useViewQueries({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
 
-      setOpenAiAppOrMcpAppsServers(serversWithOpenAiAppOrMcpApps);
-    };
+  // Fetch workspace servers to map server IDs to names
+  const { serversById } = useWorkspaceServers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
 
-    checkOpenAiAppOrMcpAppsServers(); // eslint-disable-line react-hooks/exhaustive-deps
-  }, [connectedServerNamesKey]);
+  // Compute the set of server names that have saved views
+  const serversWithViews = useMemo(() => {
+    const serverNames = new Set<string>();
+    for (const serverId of viewsByServer.keys()) {
+      const serverName = serversById.get(serverId);
+      if (serverName) {
+        serverNames.add(serverName);
+      }
+    }
+    return serverNames;
+  }, [viewsByServer, serversById]);
 
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -234,14 +243,14 @@ export default function App() {
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
-    activeTab === "resource-templates" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
     activeTab === "app-builder" ||
-    activeTab === "evals";
+    activeTab === "evals" ||
+    activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -249,16 +258,19 @@ export default function App() {
           serverConfigs:
             activeTab === "oauth-flow"
               ? appState.servers
-              : connectedServerConfigs,
+              : activeTab === "views"
+                ? workspaceServers
+                : connectedOrConnectingServerConfigs,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
+          onReconnect: handleReconnect,
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: activeTab === "oauth-flow",
-          showOnlyOpenAIAppsServers: activeTab === "app-builder",
-          openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
+          showOnlyServersWithViews: activeTab === "views",
+          serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
       : undefined;
@@ -271,29 +283,26 @@ export default function App() {
         servers={workspaceServers}
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-          onSwitchWorkspace={handleSwitchWorkspace}
-          onCreateWorkspace={handleCreateWorkspace}
-          onUpdateWorkspace={handleUpdateWorkspace}
-          onDeleteWorkspace={handleDeleteWorkspace}
-          onLeaveWorkspace={handleLeaveWorkspace}
-          onWorkspaceShared={handleWorkspaceShared}
-          activeServerSelectorProps={activeServerSelectorProps}
-          isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-        />
+        <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={workspaceServers}
+              connectedOrConnectingServerConfigs={workspaceServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (
@@ -307,30 +316,38 @@ export default function App() {
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
-          {activeTab === "resources" && (
-            <ResourcesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+          {activeTab === "views" && (
+            <ViewsTab
+              selectedServer={appState.selectedServer}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
-
-          {activeTab === "resource-templates" && (
-            <ResourceTemplatesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+          {activeTab === "resources" && (
+            <div className="h-full overflow-hidden">
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "prompts" && (
-            <PromptsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <PromptsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "skills" && <SkillsTab />}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+          <div
+            className={
+              activeTab === "tasks" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
@@ -358,19 +375,22 @@ export default function App() {
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
-              connectedServerConfigs={connectedServerConfigs}
+              connectedOrConnectingServerConfigs={
+                connectedOrConnectingServerConfigs
+              }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
           {activeTab === "app-builder" && (
-            <UIPlaygroundTab
+            <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />
           )}
           {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
             <OrganizationsTab organizationId={activeOrganizationId} />
@@ -385,8 +405,15 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
-      <AppStateProvider appState={appState}>
+      <AppStateProvider appState={effectiveAppState}>
         <Toaster />
+        <CreateOrganizationDialog
+          open={shouldRequireOrganization}
+          onOpenChange={(open) => {
+            void open;
+          }}
+          required
+        />
         {appContent}
       </AppStateProvider>
     </PreferencesStoreProvider>

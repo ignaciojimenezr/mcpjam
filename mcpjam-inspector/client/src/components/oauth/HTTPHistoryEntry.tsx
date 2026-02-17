@@ -5,9 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/utils";
 import {
   Collapsible,
@@ -162,22 +160,11 @@ export function HTTPHistoryEntry({
                 URL
               </div>
               <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                <JsonView
-                  src={{ url }}
-                  dark={true}
-                  theme="atom"
-                  enableClipboard={true}
-                  displaySize={false}
-                  collapsed={false}
-                  style={{
-                    fontSize: "11px",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                    backgroundColor: "transparent",
-                    padding: "0",
-                    borderRadius: "0",
-                    border: "none",
-                  }}
+                <JsonEditor
+                  height="100%"
+                  value={{ url }}
+                  readOnly
+                  showToolbar={false}
                 />
               </div>
             </div>
@@ -189,22 +176,11 @@ export function HTTPHistoryEntry({
                   Request Headers
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonView
-                    src={requestHeaders}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapsed={false}
-                    style={{
-                      fontSize: "11px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "transparent",
-                      padding: "0",
-                      borderRadius: "0",
-                      border: "none",
-                    }}
+                  <JsonEditor
+                    height="100%"
+                    value={requestHeaders}
+                    readOnly
+                    showToolbar={false}
                   />
                 </div>
               </div>
@@ -217,22 +193,11 @@ export function HTTPHistoryEntry({
                   Request Body
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonView
-                    src={requestBody}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapsed={false}
-                    style={{
-                      fontSize: "11px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "transparent",
-                      padding: "0",
-                      borderRadius: "0",
-                      border: "none",
-                    }}
+                  <JsonEditor
+                    height="100%"
+                    value={requestBody}
+                    readOnly
+                    showToolbar={false}
                   />
                 </div>
               </div>
@@ -245,22 +210,11 @@ export function HTTPHistoryEntry({
                   Response Headers
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonView
-                    src={responseHeaders}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapsed={false}
-                    style={{
-                      fontSize: "11px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "transparent",
-                      padding: "0",
-                      borderRadius: "0",
-                      border: "none",
-                    }}
+                  <JsonEditor
+                    height="100%"
+                    value={responseHeaders}
+                    readOnly
+                    showToolbar={false}
                   />
                 </div>
               </div>
@@ -273,22 +227,11 @@ export function HTTPHistoryEntry({
                   Response Body
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonView
-                    src={responseBody}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapsed={false}
-                    style={{
-                      fontSize: "11px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "transparent",
-                      padding: "0",
-                      borderRadius: "0",
-                      border: "none",
-                    }}
+                  <JsonEditor
+                    height="100%"
+                    value={responseBody}
+                    readOnly
+                    showToolbar={false}
                   />
                 </div>
               </div>
