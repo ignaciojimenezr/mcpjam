@@ -15,6 +15,7 @@ import {
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Server as HttpServer } from "http";
+import type { Socket } from "net";
 import type { AddressInfo } from "net";
 
 // Mock data
@@ -229,8 +230,9 @@ export function createMockServer(): Server {
 export async function startMockHttpServer(
   port = 0
 ): Promise<{ server: HttpServer; url: string; stop: () => Promise<void> }> {
-  const mcpServer = createMockServer();
+  let mcpServer: Server | null = null;
   let sseTransport: InstanceType<typeof SSEServerTransport> | null = null;
+  const activeSockets = new Set<Socket>();
 
   const httpServer = http.createServer(async (req, res) => {
     // CORS headers
@@ -249,6 +251,11 @@ export async function startMockHttpServer(
 
     // SSE endpoint
     if (req.url === "/sse" || req.url === "/sse/") {
+      if (mcpServer) {
+        await mcpServer.close();
+      }
+
+      mcpServer = createMockServer();
       sseTransport = new SSEServerTransport("/message", res);
       await mcpServer.connect(sseTransport);
       return;
@@ -287,6 +294,13 @@ export async function startMockHttpServer(
     res.end("Not found");
   });
 
+  httpServer.on("connection", (socket) => {
+    activeSockets.add(socket);
+    socket.on("close", () => {
+      activeSockets.delete(socket);
+    });
+  });
+
   return new Promise((resolve) => {
     httpServer.listen(port, "127.0.0.1", () => {
       const address = httpServer.address() as AddressInfo;
@@ -295,10 +309,19 @@ export async function startMockHttpServer(
       resolve({
         server: httpServer,
         url,
-        stop: () =>
-          new Promise<void>((resolveStop) => {
+        stop: async () => {
+          if (mcpServer) {
+            await mcpServer.close();
+          }
+
+          for (const socket of activeSockets) {
+            socket.destroy();
+          }
+
+          await new Promise<void>((resolveStop) => {
             httpServer.close(() => resolveStop());
-          }),
+          });
+        },
       });
     });
   });
