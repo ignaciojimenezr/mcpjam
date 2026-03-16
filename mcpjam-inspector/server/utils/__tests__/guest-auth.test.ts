@@ -21,7 +21,8 @@ describe("guest-auth", () => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
-    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+      "test-guest-session-secret";
     global.fetch = vi.fn();
   });
 

@@ -23,11 +23,16 @@ function buildConvexGuestUrl(pathname: string): string {
 }
 
 export function getRemoteGuestSessionUrl(): string {
-  return process.env.MCPJAM_GUEST_SESSION_URL || buildConvexGuestUrl("/guest/session");
+  return (
+    process.env.MCPJAM_GUEST_SESSION_URL ||
+    buildConvexGuestUrl("/guest/session")
+  );
 }
 
 export function getRemoteGuestJwksUrl(): string {
-  return process.env.MCPJAM_GUEST_JWKS_URL || buildConvexGuestUrl("/guest/jwks");
+  return (
+    process.env.MCPJAM_GUEST_JWKS_URL || buildConvexGuestUrl("/guest/jwks")
+  );
 }
 
 export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | null> {

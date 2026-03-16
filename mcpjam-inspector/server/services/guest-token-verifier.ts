@@ -50,9 +50,9 @@ function verifyGuestTokenSignature(
   }
 }
 
-function parseGuestToken(token: string):
-  | { parsed: ParsedGuestToken }
-  | { reason: string } {
+function parseGuestToken(
+  token: string,
+): { parsed: ParsedGuestToken } | { reason: string } {
   if (!token || typeof token !== "string") {
     return { reason: "missing_token" };
   }
