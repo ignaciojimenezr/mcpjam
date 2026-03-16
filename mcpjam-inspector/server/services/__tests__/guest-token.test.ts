@@ -6,6 +6,10 @@
  * JWKS export, and issuer verification.
  */
 
+import { generateKeyPairSync } from "crypto";
+import { mkdtempSync, rmSync } from "fs";
+import os from "os";
+import path from "path";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   initGuestTokenSecret,
@@ -14,14 +18,55 @@ import {
   getGuestJwks,
   getGuestIssuer,
 } from "../guest-token.js";
+import { logger } from "../../utils/logger.js";
+
+const ORIGINAL_GUEST_JWT_PRIVATE_KEY = process.env.GUEST_JWT_PRIVATE_KEY;
+const ORIGINAL_GUEST_JWT_PUBLIC_KEY = process.env.GUEST_JWT_PUBLIC_KEY;
+const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+
+function restoreEnv() {
+  if (ORIGINAL_GUEST_JWT_PRIVATE_KEY === undefined) {
+    delete process.env.GUEST_JWT_PRIVATE_KEY;
+  } else {
+    process.env.GUEST_JWT_PRIVATE_KEY = ORIGINAL_GUEST_JWT_PRIVATE_KEY;
+  }
+
+  if (ORIGINAL_GUEST_JWT_PUBLIC_KEY === undefined) {
+    delete process.env.GUEST_JWT_PUBLIC_KEY;
+  } else {
+    process.env.GUEST_JWT_PUBLIC_KEY = ORIGINAL_GUEST_JWT_PUBLIC_KEY;
+  }
+
+  if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
+    delete process.env.GUEST_JWT_KEY_DIR;
+  } else {
+    process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+  }
+
+  if (ORIGINAL_NODE_ENV === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+  }
+}
 
 describe("guest-token service", () => {
+  let testGuestKeyDir: string;
+
   beforeEach(() => {
+    restoreEnv();
+    delete process.env.GUEST_JWT_PRIVATE_KEY;
+    delete process.env.GUEST_JWT_PUBLIC_KEY;
+    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-token-test-"));
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
   });
 
   afterEach(() => {
+    restoreEnv();
     vi.restoreAllMocks();
+    rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
   describe("initGuestTokenSecret", () => {
@@ -39,10 +84,54 @@ describe("guest-token service", () => {
       initGuestTokenSecret();
       const { token: token1 } = issueGuestToken();
 
-      // Re-initialize with a new ephemeral key pair
+      const secondGuestKeyDir = mkdtempSync(
+        path.join(os.tmpdir(), "guest-token-test-"),
+      );
+      process.env.GUEST_JWT_KEY_DIR = secondGuestKeyDir;
       initGuestTokenSecret();
       const result = validateGuestToken(token1);
+      rmSync(secondGuestKeyDir, { recursive: true, force: true });
       expect(result.valid).toBe(false);
+    });
+
+    it("keeps tokens valid across reinitialization when env keys are stable", () => {
+      const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      process.env.GUEST_JWT_PRIVATE_KEY = pair.privateKey.export({
+        type: "pkcs8",
+        format: "pem",
+      });
+      process.env.GUEST_JWT_PUBLIC_KEY = pair.publicKey.export({
+        type: "spki",
+        format: "pem",
+      });
+
+      initGuestTokenSecret();
+      const { token } = issueGuestToken();
+
+      initGuestTokenSecret();
+      const result = validateGuestToken(token);
+      expect(result.valid).toBe(true);
+    });
+
+    it("warns in production when env keys are missing but still falls back to ephemeral keys", () => {
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      process.env.NODE_ENV = "production";
+      delete process.env.GUEST_JWT_PRIVATE_KEY;
+      delete process.env.GUEST_JWT_PUBLIC_KEY;
+
+      initGuestTokenSecret();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Guest JWT: using ephemeral signing keys in production.",
+        ),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("env vars are missing"),
+      );
+
+      const { token } = issueGuestToken();
+      expect(validateGuestToken(token).valid).toBe(true);
     });
   });
 

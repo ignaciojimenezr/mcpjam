@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { issueGuestToken } from "../../services/guest-token.js";
+import { fetchRemoteGuestSession } from "../../utils/guest-session-source.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
@@ -30,7 +30,9 @@ function getClientIp(c: any): string {
 /**
  * POST /api/web/guest-session
  *
- * Issues a new guest bearer token for unauthenticated visitors.
+ * Returns a guest bearer token for unauthenticated visitors.
+ * Inspector rate-limits this endpoint locally, then proxies guest token
+ * issuance to Convex.
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
@@ -60,8 +62,19 @@ guestSession.post("/", async (c) => {
     ipWindows.set(ip, { count: 1, windowStart: now });
   }
 
-  const { guestId, token, expiresAt } = issueGuestToken();
-  return c.json({ guestId, token, expiresAt });
+  const session = await fetchRemoteGuestSession();
+  if (!session) {
+    return c.json(
+      {
+        code: ErrorCode.INTERNAL_ERROR,
+        message:
+          "Unable to obtain a guest session right now. Please try again.",
+      },
+      503,
+    );
+  }
+
+  return c.json(session);
 });
 
 export default guestSession;
