@@ -29,6 +29,7 @@ import {
   parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
+  type GlobalOptions,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import {
@@ -49,6 +50,8 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   reporter?: string;
   debugOut?: string;
   ui?: boolean;
+  open?: boolean;
+  attachOnly?: boolean;
   inspectorUrl?: string;
   serverName?: string;
   protocol?: string;
@@ -131,7 +134,16 @@ export function registerToolsCommands(program: Command): void {
         "--debug-out <path>",
         "Write a structured debug artifact to a file",
       )
-      .option("--ui", "Open Inspector and render the tool result")
+      .option("--ui", "Render the tool result in Inspector App Builder")
+      .option("--open", "Open Inspector in the system browser before rendering")
+      .option(
+        "--no-open",
+        "Start/use Inspector without opening a system browser",
+      )
+      .option(
+        "--attach-only",
+        "Require an already-running Inspector browser client; do not start or open Inspector",
+      )
       .option("--inspector-url <url>", "Local Inspector base URL (with --ui)")
       .option(
         "--server-name <name>",
@@ -187,6 +199,9 @@ export function registerToolsCommands(program: Command): void {
 
     if (options.ui && reporter) {
       throw usageError("--ui cannot be used together with --reporter.");
+    }
+    if (options.attachOnly && options.open === true) {
+      throw usageError("--attach-only cannot be used together with --open.");
     }
 
     if (reporter && !shouldValidateResponse && !shouldExpectSuccess) {
@@ -265,6 +280,7 @@ export function registerToolsCommands(program: Command): void {
     const toolResultError = isCallToolResultError(result);
 
     let outputPayload = result;
+    let debugOutputPayload: unknown = outputPayload;
     let inspectorRenderError:
       | { code: string; message: string; details?: unknown }
       | undefined;
@@ -274,38 +290,57 @@ export function registerToolsCommands(program: Command): void {
         typeof options.serverName === "string" && options.serverName.trim()
           ? options.serverName.trim()
           : buildInspectorServerName(options);
+      const openBrowser = resolveInspectorOpenBrowser(options, globalOptions);
       let uiResult: Record<string, unknown>;
 
       try {
         uiResult = await runUiRender({
           baseUrl: options.inspectorUrl,
           config,
+          openBrowser,
           params,
           renderContext: renderContext!,
           serverName,
+          startIfNeeded: resolveInspectorStartIfNeeded(options),
           timeoutMs: globalOptions.timeout,
           toolName,
           toolResult: result,
         });
         inspectorRenderError = findInspectorRenderError(uiResult);
       } catch (error) {
-        inspectorRenderError = toStructuredError(normalizeCliError(error)).error;
+        inspectorRenderError = toStructuredError(
+          normalizeCliError(error),
+        ).error;
         uiResult = {
           status: "error",
           error: inspectorRenderError,
+          ...extractInspectorRenderErrorUrls(inspectorRenderError),
         };
       }
 
-      outputPayload = {
+      const compactInspectorRender = buildCompactInspectorRender(uiResult);
+      const compactOutputPayload = {
         success: !inspectorRenderError && !validationFailed && !toolResultError,
         command: "tools call",
         inspectorUi: true,
+        ...(typeof compactInspectorRender.browserUrl === "string"
+          ? { inspectorBrowserUrl: compactInspectorRender.browserUrl }
+          : {}),
+        ...(typeof compactInspectorRender.frontendUrl === "string"
+          ? { inspectorFrontendUrl: compactInspectorRender.frontendUrl }
+          : {}),
         target,
         toolName,
-        params,
+        parameterKeys: Object.keys(params),
         result,
-        inspectorRender: uiResult,
+        inspectorRender: compactInspectorRender,
         ...(inspectorRenderError ? { error: inspectorRenderError } : {}),
+      };
+      outputPayload = compactOutputPayload;
+      debugOutputPayload = {
+        ...compactOutputPayload,
+        params,
+        inspectorRender: uiResult,
       };
     }
 
@@ -323,11 +358,11 @@ export function registerToolsCommands(program: Command): void {
         ? {
             status: "error",
             error: inspectorRenderError,
-            result: outputPayload,
+            result: debugOutputPayload,
           }
         : {
             status: "success",
-            result: outputPayload,
+            result: debugOutputPayload,
           },
       snapshot: options.debugOut
         ? {
@@ -370,4 +405,120 @@ export function registerToolsCommands(program: Command): void {
       setProcessExitCode(1);
     }
   });
+}
+
+function resolveInspectorOpenBrowser(
+  options: Pick<ToolsCallOptions, "attachOnly" | "open">,
+  globalOptions: GlobalOptions,
+): boolean {
+  if (options.attachOnly) {
+    return false;
+  }
+  if (options.open !== undefined) {
+    return options.open;
+  }
+  return globalOptions.format === "human" && !globalOptions.quiet;
+}
+
+export function resolveInspectorStartIfNeeded(options: {
+  attachOnly?: boolean;
+  open?: boolean;
+}): boolean {
+  return options.attachOnly !== true;
+}
+
+function extractInspectorRenderErrorUrls(error: {
+  details?: unknown;
+}): Record<string, unknown> {
+  if (!error.details || typeof error.details !== "object") {
+    return {};
+  }
+
+  const details = error.details as Record<string, unknown>;
+  return {
+    ...(typeof details.inspectorBrowserUrl === "string"
+      ? { browserUrl: details.inspectorBrowserUrl }
+      : {}),
+    ...(typeof details.inspectorFrontendUrl === "string"
+      ? { frontendUrl: details.inspectorFrontendUrl }
+      : {}),
+  };
+}
+
+function buildCompactInspectorRender(
+  uiResult: Record<string, unknown>,
+): Record<string, unknown> {
+  const commands: Record<string, unknown> = {};
+  let hasCommandError = false;
+
+  for (const [commandName, commandValue] of Object.entries(uiResult)) {
+    const response = compactInspectorCommandResponse(commandValue);
+    if (!response) {
+      continue;
+    }
+    commands[commandName] = response;
+    if (response.status === "error") {
+      hasCommandError = true;
+    }
+  }
+
+  const topLevelError =
+    uiResult.status === "error" && isRecord(uiResult.error)
+      ? { error: uiResult.error }
+      : {};
+
+  return {
+    status:
+      hasCommandError || uiResult.status === "error" ? "error" : "rendered",
+    // Contract metadata: renders target the active client and fresh tabs do not
+    // hydrate this injected state.
+    mode: "active-client",
+    urlHydratesRender: false,
+    ...(typeof uiResult.baseUrl === "string"
+      ? { baseUrl: uiResult.baseUrl }
+      : {}),
+    ...(typeof uiResult.browserUrl === "string"
+      ? { browserUrl: uiResult.browserUrl }
+      : {}),
+    ...(typeof uiResult.frontendUrl === "string"
+      ? { frontendUrl: uiResult.frontendUrl }
+      : {}),
+    ...(typeof uiResult.inspectorStarted === "boolean"
+      ? { inspectorStarted: uiResult.inspectorStarted }
+      : {}),
+    ...(typeof uiResult.browserOpenRequested === "boolean"
+      ? { browserOpenRequested: uiResult.browserOpenRequested }
+      : {}),
+    ...(typeof uiResult.hasActiveClient === "boolean"
+      ? { hasActiveClient: uiResult.hasActiveClient }
+      : {}),
+    ...(Object.keys(commands).length > 0 ? { commands } : {}),
+    ...topLevelError,
+  };
+}
+
+type CompactInspectorCommandStatus = "success" | "error";
+
+function compactInspectorCommandResponse(
+  value: unknown,
+): { status: CompactInspectorCommandStatus; error?: unknown } | undefined {
+  if (!isRecord(value) || !isCompactInspectorCommandStatus(value.status)) {
+    return undefined;
+  }
+  return {
+    status: value.status,
+    ...(value.status === "error" && isRecord(value.error)
+      ? { error: value.error }
+      : {}),
+  };
+}
+
+function isCompactInspectorCommandStatus(
+  value: unknown,
+): value is CompactInspectorCommandStatus {
+  return value === "success" || value === "error";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

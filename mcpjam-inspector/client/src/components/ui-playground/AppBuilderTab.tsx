@@ -105,10 +105,18 @@ interface AppBuilderTabProps {
  * explanatory empty state rather than spinning forever.
  */
 const SERVER_SYNC_TIMEOUT_MS = 10000;
+const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
+
+type ExecutionInjectionWaiter = {
+  expectedToolCallId?: string;
+  reject: (error: unknown) => void;
+  resolve: (toolCallId?: string) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
 
 export function AppBuilderTab({
   activeWorkspaceId = null,
@@ -233,6 +241,98 @@ export function AppBuilderTab({
     setToolOutput,
     setToolResponseMetadata,
   });
+
+  const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
+
+  const waitForExecutionInjection = useCallback(
+    (expectedToolCallId: string | undefined, timeoutMs?: number) => {
+      let waiter: ExecutionInjectionWaiter | undefined;
+      const effectiveTimeoutMs =
+        typeof timeoutMs === "number" && timeoutMs > 0
+          ? timeoutMs
+          : EXECUTION_INJECTION_TIMEOUT_MS;
+
+      const removeWaiter = () => {
+        if (!waiter) return;
+        executionInjectionWaitersRef.current =
+          executionInjectionWaitersRef.current.filter(
+            (entry) => entry !== waiter,
+          );
+      };
+
+      const promise = new Promise<string | undefined>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          removeWaiter();
+          reject(
+            createInspectorCommandClientError(
+              "timeout",
+              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`,
+            ),
+          );
+        }, effectiveTimeoutMs);
+
+        waiter = {
+          ...(expectedToolCallId ? { expectedToolCallId } : {}),
+          reject,
+          resolve: (toolCallId?: string) => {
+            clearTimeout(timeoutId);
+            removeWaiter();
+            resolve(toolCallId);
+          },
+          timeoutId,
+        };
+        executionInjectionWaitersRef.current.push(waiter);
+      });
+
+      return {
+        cancel: () => {
+          if (!waiter) return;
+          clearTimeout(waiter.timeoutId);
+          removeWaiter();
+        },
+        promise,
+      };
+    },
+    [],
+  );
+
+  const handleExecutionInjected = useCallback(
+    (toolCallId?: string) => {
+      clearPendingExecution();
+      const resolvedWaiters: ExecutionInjectionWaiter[] = [];
+      const pendingWaiters: ExecutionInjectionWaiter[] = [];
+      for (const waiter of executionInjectionWaitersRef.current) {
+        if (
+          !waiter.expectedToolCallId ||
+          waiter.expectedToolCallId === toolCallId
+        ) {
+          resolvedWaiters.push(waiter);
+        } else {
+          pendingWaiters.push(waiter);
+        }
+      }
+      executionInjectionWaitersRef.current = pendingWaiters;
+      for (const waiter of resolvedWaiters) {
+        waiter.resolve(toolCallId);
+      }
+    },
+    [clearPendingExecution],
+  );
+
+  useEffect(() => {
+    return () => {
+      const waiters = executionInjectionWaitersRef.current.splice(0);
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeoutId);
+        waiter.reject(
+          createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "App Builder unmounted before the tool result rendered.",
+          ),
+        );
+      }
+    };
+  }, []);
 
   // Saved requests hook
   const savedRequestsHook = useSavedRequests({
@@ -604,11 +704,22 @@ export function AppBuilderTab({
       async (rawCommand) => {
         const command = rawCommand as RenderToolResultInspectorCommand;
         const selection = await selectToolForCommand(command);
-        const outcome = await injectToolResult({
-          toolName: command.payload.toolName,
-          parameters: selection.parameters,
-          result: command.payload.result,
-        });
+        const injection = waitForExecutionInjection(
+          command.id,
+          command.timeoutMs,
+        );
+        let outcome: Awaited<ReturnType<typeof injectToolResult>>;
+        try {
+          outcome = await injectToolResult({
+            toolName: command.payload.toolName,
+            parameters: selection.parameters,
+            result: command.payload.result,
+            toolCallId: command.id,
+          });
+          await injection.promise;
+        } finally {
+          injection.cancel();
+        }
         await waitForUiCommit();
 
         return {
@@ -686,6 +797,7 @@ export function AppBuilderTab({
     setDisplayMode,
     setSelectedProtocol,
     updateGlobal,
+    waitForExecutionInjection,
   ]);
 
   // Get invoking message from tool metadata
@@ -844,7 +956,7 @@ export function AppBuilderTab({
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}
             pendingExecution={pendingExecution}
-            onExecutionInjected={clearPendingExecution}
+            onExecutionInjected={handleExecutionInjected}
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
