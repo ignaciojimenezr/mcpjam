@@ -1,7 +1,7 @@
 ---
-"@mcpjam/sdk": minor
-"@mcpjam/cli": minor
-"@mcpjam/inspector": minor
+"@mcpjam/sdk": patch
+"@mcpjam/cli": patch
+"@mcpjam/inspector": patch
 ---
 
 Bump sdk, cli, and inspector
