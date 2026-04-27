@@ -50,6 +50,29 @@ export function AuthUpperArea({
         </div>
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="agents-cta-link hidden px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground min-[520px]:inline-flex"
+        >
+          <a
+            href="https://docs.mcpjam.com/cli/overview"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open MCPJam for Agents documentation"
+            title="MCPJam for Agents"
+            onClick={() => {
+              posthog.capture("agents_cta_clicked", {
+                location: "header",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              });
+            }}
+          >
+            <span>MCPJam for Agents</span>
+          </a>
+        </Button>
         {communityLinks}
         <NotificationBell />
         {!user && !isLoading && (
