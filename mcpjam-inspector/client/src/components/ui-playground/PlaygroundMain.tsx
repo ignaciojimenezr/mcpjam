@@ -1738,6 +1738,14 @@ export function PlaygroundMain({
                                   model={selectedModel}
                                   toolsMetadata={toolsMetadata}
                                   toolServerMap={toolServerMap}
+                                  traceStartedAtMs={
+                                    effectiveLiveTraceEnvelope?.traceStartedAtMs ??
+                                    null
+                                  }
+                                  traceEndedAtMs={
+                                    effectiveLiveTraceEnvelope?.traceEndedAtMs ??
+                                    null
+                                  }
                                   forcedViewMode={activeTraceViewMode}
                                   hideToolbar
                                   fillContent
@@ -1771,6 +1779,14 @@ export function PlaygroundMain({
                               model={selectedModel}
                               toolsMetadata={toolsMetadata}
                               toolServerMap={toolServerMap}
+                              traceStartedAtMs={
+                                effectiveLiveTraceEnvelope?.traceStartedAtMs ??
+                                null
+                              }
+                              traceEndedAtMs={
+                                effectiveLiveTraceEnvelope?.traceEndedAtMs ??
+                                null
+                              }
                               forcedViewMode={activeTraceViewMode}
                               hideToolbar
                               fillContent
