@@ -81,12 +81,13 @@ jobs:
             const workflowId = "deploy-staging.yml";
             const { owner, repo } = context.repo;
             const headSha = context.sha;
+            // Fetch without branch/status filters — GitHub's search index
+            // can lag minutes behind, causing false negatives on recent runs.
+            // JS-side filtering on head_sha + conclusion is authoritative.
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner,
               repo,
               workflow_id: workflowId,
-              branch: "main",
-              status: "completed",
               per_page: 100,
             });
 
