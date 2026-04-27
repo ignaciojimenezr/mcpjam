@@ -94,17 +94,58 @@ export function buildInspectorUrl(baseUrl: string, tab?: string): string {
   return `${baseUrl}/#${tab.trim()}`;
 }
 
+export function normalizeInspectorFrontendUrl(
+  frontendUrl: unknown,
+): string | undefined {
+  if (typeof frontendUrl !== "string" || !frontendUrl.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(frontendUrl.trim());
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.href.replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildInspectorBrowserUrl(
+  baseUrl: string,
+  frontendUrl?: string,
+  tab?: string,
+): string {
+  return buildInspectorUrl(
+    normalizeInspectorFrontendUrl(frontendUrl) ?? baseUrl,
+    tab,
+  );
+}
+
+export interface EnsureInspectorResult {
+  baseUrl: string;
+  frontendUrl?: string;
+  url: string;
+  started: boolean;
+}
+
 export async function ensureInspector(
   options: EnsureInspectorOptions = {},
-): Promise<{ baseUrl: string; started: boolean }> {
+): Promise<EnsureInspectorResult> {
   const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
 
   const health = await getInspectorHealth(baseUrl);
   if (health.healthy) {
+    const url = buildInspectorBrowserUrl(baseUrl, health.frontendUrl, options.tab);
     if (options.openBrowser && !health.hasActiveClient) {
-      openUrl(buildInspectorUrl(baseUrl, options.tab));
+      openUrl(url);
     }
-    return { baseUrl, started: false };
+    return {
+      baseUrl,
+      ...(health.frontendUrl ? { frontendUrl: health.frontendUrl } : {}),
+      url,
+      started: false,
+    };
   }
 
   if (!options.startIfNeeded) {
@@ -116,11 +157,25 @@ export async function ensureInspector(
   await startInspector(baseUrl, options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS);
   clearInspectorSessionTokenCache(baseUrl);
 
+  const startedHealth = await getInspectorHealth(baseUrl);
+  const url = buildInspectorBrowserUrl(
+    baseUrl,
+    startedHealth.frontendUrl,
+    options.tab,
+  );
+
   if (options.openBrowser) {
-    openUrl(buildInspectorUrl(baseUrl, options.tab));
+    openUrl(url);
   }
 
-  return { baseUrl, started: true };
+  return {
+    baseUrl,
+    ...(startedHealth.frontendUrl
+      ? { frontendUrl: startedHealth.frontendUrl }
+      : {}),
+    url,
+    started: true,
+  };
 }
 
 export async function stopInspector(
@@ -169,10 +224,15 @@ export class InspectorApiClient {
     return ensureInspector({ ...options, baseUrl: this.baseUrl });
   }
 
-  async connectServer(serverId: string, serverConfig: unknown) {
+  async connectServer(
+    serverId: string,
+    serverConfig: unknown,
+    options: { timeoutMs?: number } = {},
+  ) {
     return this.request("/api/mcp/connect", {
       method: "POST",
       body: { serverId, serverConfig },
+      timeoutMs: options.timeoutMs,
     });
   }
 
@@ -412,6 +472,7 @@ function getInspectorStartScriptPath(): string {
 interface InspectorHealthStatus {
   healthy: boolean;
   hasActiveClient: boolean;
+  frontendUrl?: string;
 }
 
 async function getInspectorHealth(
@@ -425,10 +486,15 @@ async function getInspectorHealth(
     if (!response.ok) {
       return { healthy: false, hasActiveClient: false };
     }
-    const body = (await response.json()) as { hasActiveClient?: boolean };
+    const body = (await response.json()) as {
+      hasActiveClient?: boolean;
+      frontend?: unknown;
+    };
+    const frontendUrl = normalizeInspectorFrontendUrl(body.frontend);
     return {
       healthy: true,
       hasActiveClient: body.hasActiveClient === true,
+      ...(frontendUrl ? { frontendUrl } : {}),
     };
   } catch {
     return { healthy: false, hasActiveClient: false };
@@ -453,8 +519,8 @@ async function startInspector(
   const startScriptPath = getInspectorStartScriptPath();
   const hasStartScript = existsSync(startScriptPath);
   const args = hasStartScript
-    ? [startScriptPath, "--port", port]
-    : ["-y", "@mcpjam/inspector@latest", "--port", port];
+    ? [startScriptPath, "--port", port, "--no-open"]
+    : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
   const executable = hasStartScript ? process.execPath : getNpxExecutable();
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
@@ -468,6 +534,7 @@ async function startInspector(
       env: {
         ...process.env,
         HOST: parsedUrl.hostname,
+        MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",
       },
     });
   } finally {

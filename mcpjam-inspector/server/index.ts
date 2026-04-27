@@ -36,6 +36,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 
 const sysLogger = getSystemLogger("process");
 
@@ -103,7 +104,6 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
   SERVER_PORT,
-  SERVER_HOSTNAME,
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
@@ -186,6 +186,14 @@ function getMCPConfigFromEnv() {
     ],
     initialTab,
     cspMode,
+  };
+}
+
+function getInspectorFrontendUrlOptions() {
+  return {
+    isElectron: process.env.ELECTRON_APP === "true",
+    isPackaged: process.env.IS_PACKAGED === "true",
+    isProduction: process.env.NODE_ENV === "production",
   };
 }
 
@@ -361,6 +369,7 @@ app.get("/health", (c) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
+    frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
   });
 });
 
@@ -474,7 +483,7 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: `http://localhost:${SERVER_PORT}`,
+      frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
     });
   });
 }

@@ -4,8 +4,11 @@ import test from "node:test";
 import type { AddressInfo } from "node:net";
 import {
   InspectorApiClient,
+  buildInspectorBrowserUrl,
   clearInspectorSessionTokenCache,
+  ensureInspector,
   getNpxExecutable,
+  normalizeInspectorFrontendUrl,
   normalizeInspectorBaseUrl,
   stopInspector,
 } from "../src/lib/inspector-api.js";
@@ -120,6 +123,44 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
   );
 });
 
+test("InspectorApiClient applies explicit timeout to connectServer", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ token: "connect-timeout-token" }));
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/api/mcp/connect") {
+        setTimeout(() => {
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ success: true, status: "connected" }));
+        }, 200);
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      const client = new InspectorApiClient({ baseUrl });
+      const startedAt = Date.now();
+
+      await assert.rejects(
+        () =>
+          client.connectServer(
+            "slow",
+            { url: "http://example.test/mcp" },
+            { timeoutMs: 25 },
+          ),
+        /Failed to contact Inspector/,
+      );
+      assert.ok(Date.now() - startedAt < 1_000);
+    },
+  );
+});
+
 test("InspectorApiClient caches session tokens per base URL", async () => {
   let tokenRequests = 0;
 
@@ -215,6 +256,65 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
       process.env.MCPJAM_INSPECTOR_URL = previous;
     }
   }
+});
+
+test("normalizeInspectorFrontendUrl accepts absolute frontend URLs only", () => {
+  assert.equal(
+    normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#app-builder"),
+    "http://localhost:5173",
+  );
+  assert.equal(normalizeInspectorFrontendUrl("not a url"), undefined);
+  assert.equal(normalizeInspectorFrontendUrl(undefined), undefined);
+});
+
+test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
+  assert.equal(
+    buildInspectorBrowserUrl(
+      "http://127.0.0.1:6274",
+      "http://localhost:5173/",
+      "app-builder",
+    ),
+    "http://localhost:5173/#app-builder",
+  );
+  assert.equal(
+    buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "app-builder"),
+    "http://127.0.0.1:6274/#app-builder",
+  );
+});
+
+test("ensureInspector reports the frontend URL from Inspector health", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            status: "ok",
+            hasActiveClient: true,
+            frontend: "http://localhost:5173/",
+          }),
+        );
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      const result = await ensureInspector({
+        baseUrl,
+        openBrowser: true,
+        tab: "app-builder",
+      });
+
+      assert.deepEqual(result, {
+        baseUrl,
+        frontendUrl: "http://localhost:5173",
+        url: "http://localhost:5173/#app-builder",
+        started: false,
+      });
+    },
+  );
 });
 
 test("getNpxExecutable resolves Windows batch shim", () => {
