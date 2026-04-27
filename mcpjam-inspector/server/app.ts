@@ -44,6 +44,7 @@ import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -74,6 +75,14 @@ export function createHonoApp() {
       },
       410,
     );
+  const isElectron = process.env.ELECTRON_APP === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  const isPackaged = process.env.IS_PACKAGED === "true";
+  const frontendUrl = getInspectorFrontendUrl({
+    isElectron,
+    isPackaged,
+    isProduction,
+  });
 
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
   const mcpClientManager = new MCPClientManager(
@@ -231,6 +240,7 @@ export function createHonoApp() {
       status: "ok",
       timestamp: new Date().toISOString(),
       hasActiveClient: inspectorCommandBus.hasActiveClient(),
+      frontend: frontendUrl,
     });
   });
 
@@ -282,10 +292,6 @@ export function createHonoApp() {
   });
 
   // Static hosting / dev redirect behavior
-  const isElectron = process.env.ELECTRON_APP === "true";
-  const isProduction = process.env.NODE_ENV === "production";
-  const isPackaged = process.env.IS_PACKAGED === "true";
-
   if (isProduction || (isElectron && isPackaged)) {
     // Production (web) or Electron packaged build: serve files from bundled client
     let root = "./dist/client";
@@ -348,9 +354,8 @@ export function createHonoApp() {
     });
   } else if (isElectron && !isPackaged) {
     // Electron development: redirect any front-end route to the renderer dev server
-    const rendererDevUrl = "http://localhost:8080";
     app.get("/*", (c) => {
-      const target = new URL(c.req.path, rendererDevUrl).toString();
+      const target = new URL(c.req.path, frontendUrl).toString();
       return c.redirect(target, 307);
     });
   } else {
@@ -360,7 +365,7 @@ export function createHonoApp() {
       return c.json({
         message: "MCPJam API Server",
         environment: "development",
-        frontend: "http://localhost:8080",
+        frontend: frontendUrl,
       });
     });
   }
