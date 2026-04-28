@@ -113,8 +113,8 @@ jobs:
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
 
-          cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam Inspector.dmg"
-          echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam Inspector.dmg" >> $GITHUB_ENV
+          cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam.Inspector.dmg"
+          echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam.Inspector.dmg" >> $GITHUB_ENV
 
       - name: Notarize ZIP
         run: |

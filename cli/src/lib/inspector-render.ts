@@ -5,7 +5,7 @@ import {
   delay,
   type InspectorCommandResponse,
 } from "./inspector-api.js";
-import { usageError } from "./output.js";
+import { operationalError, usageError } from "./output.js";
 import type { SharedServerTargetOptions } from "./server-config.js";
 
 export type AppRenderContext = {
@@ -23,23 +23,52 @@ type InspectorAppRenderResult = {
   snapshot?: InspectorCommandResponse;
 };
 
+type InspectorUiRenderResult = InspectorAppRenderResult & {
+  baseUrl: string;
+  browserOpenRequested: boolean;
+  browserUrl: string;
+  frontendUrl?: string;
+  hasActiveClient: boolean;
+  inspectorStarted: boolean;
+};
+
 export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
+  frontendUrl?: string;
+  openBrowser?: boolean;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
+  skipDiscovery?: boolean;
   serverName: string;
+  startIfNeeded?: boolean;
   timeoutMs: number;
   toolName: string;
   toolResult: unknown;
-}) {
+}): Promise<InspectorUiRenderResult> {
   const client = new InspectorApiClient({ baseUrl: options.baseUrl });
+  const openBrowser = options.openBrowser === true;
   const ensureResult = await client.ensure({
-    openBrowser: true,
-    startIfNeeded: true,
+    frontendUrl: options.frontendUrl,
+    openBrowser,
+    skipDiscovery: options.skipDiscovery,
+    startIfNeeded: options.startIfNeeded ?? true,
     tab: "app-builder",
     timeoutMs: options.timeoutMs,
   });
+
+  if (!ensureResult.hasActiveClient && !openBrowser) {
+    const startedNote = ensureResult.started
+      ? " Inspector was just started by the CLI and is still running."
+      : "";
+    throw operationalError(
+      `Inspector has no active browser client.${startedNote} Open the Inspector App Builder URL in your browser, then rerun \`tools call --ui\`; or pass \`--open\` to let the CLI open a system browser.`,
+      {
+        inspectorBrowserUrl: ensureResult.url,
+        inspectorStarted: ensureResult.started,
+      },
+    );
+  }
 
   await client.connectServer(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
@@ -57,6 +86,12 @@ export async function runUiRender(options: {
 
   return {
     baseUrl: ensureResult.baseUrl,
+    browserUrl: ensureResult.url,
+    ...(ensureResult.frontendUrl
+      ? { frontendUrl: ensureResult.frontendUrl }
+      : {}),
+    browserOpenRequested: openBrowser,
+    hasActiveClient: ensureResult.hasActiveClient,
     inspectorStarted: ensureResult.started,
     ...renderResult,
   };

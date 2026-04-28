@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import type { AddressInfo } from "node:net";
 import {
   InspectorApiClient,
@@ -10,8 +10,25 @@ import {
   getNpxExecutable,
   normalizeInspectorFrontendUrl,
   normalizeInspectorBaseUrl,
+  resolveInspectorBrowserBaseUrl,
   stopInspector,
 } from "../src/lib/inspector-api.js";
+
+const previousDisableBrowserOpen = process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
+const INSPECTOR_FRONTEND_HTML =
+  '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
+
+before(() => {
+  process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = "1";
+});
+
+after(() => {
+  if (previousDisableBrowserOpen === undefined) {
+    delete process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
+  } else {
+    process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = previousDisableBrowserOpen;
+  }
+});
 
 async function readJsonBody(
   request: http.IncomingMessage,
@@ -40,6 +57,114 @@ async function withServer(
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
+}
+
+async function withServerOnAvailablePort(
+  ports: number[],
+  handler: http.RequestListener,
+  fn: (baseUrl: string) => Promise<void>,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (const port of ports) {
+    const server = http.createServer(handler);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+
+      try {
+        await fn(`http://127.0.0.1:${port}`);
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise<void>((resolve) => {
+        // EADDRINUSE means listen never completed; close reports ERR_SERVER_NOT_RUNNING, which is safe to swallow here.
+        server.close(() => resolve());
+      });
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("No available port for test server.");
+}
+
+async function withServersOnConsecutiveAvailablePorts(
+  ports: number[],
+  handlers: [http.RequestListener, http.RequestListener],
+  fn: (baseUrls: [string, string]) => Promise<void>,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (const port of ports) {
+    const servers = handlers.map((handler) => http.createServer(handler)) as [
+      http.Server,
+      http.Server,
+    ];
+    try {
+      await new Promise<void>((resolve, reject) => {
+        servers[0].once("error", reject);
+        servers[0].listen(port, "127.0.0.1", () => {
+          servers[0].off("error", reject);
+          resolve();
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        servers[1].once("error", reject);
+        servers[1].listen(port + 1, "127.0.0.1", () => {
+          servers[1].off("error", reject);
+          resolve();
+        });
+      });
+
+      try {
+        await fn([
+          `http://127.0.0.1:${port}`,
+          `http://127.0.0.1:${port + 1}`,
+        ]);
+      } finally {
+        await Promise.all(
+          servers.map(
+            (server) =>
+              new Promise<void>((resolve, reject) => {
+                server.close((error) => (error ? reject(error) : resolve()));
+              }),
+          ),
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      await Promise.all(
+        servers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              server.close(() => resolve());
+            }),
+        ),
+      );
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("No consecutive ports available for test servers.");
 }
 
 test("InspectorApiClient sends session token auth and supported endpoint payloads", async () => {
@@ -258,6 +383,13 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
   }
 });
 
+test("normalizeInspectorBaseUrl preserves explicit localhost hosts", () => {
+  assert.equal(
+    normalizeInspectorBaseUrl("http://localhost:6274/"),
+    "http://localhost:6274",
+  );
+});
+
 test("normalizeInspectorFrontendUrl accepts absolute frontend URLs only", () => {
   assert.equal(
     normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#app-builder"),
@@ -277,12 +409,127 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
     "http://localhost:5173/#app-builder",
   );
   assert.equal(
+    buildInspectorBrowserUrl(
+      "http://127.0.0.1:6274",
+      "http://localhost:6274/",
+      "app-builder",
+    ),
+    "http://127.0.0.1:6274/#app-builder",
+  );
+  assert.equal(
     buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "app-builder"),
     "http://127.0.0.1:6274/#app-builder",
   );
 });
 
 test("ensureInspector reports the frontend URL from Inspector health", async () => {
+  await withServer(
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      await withServer(
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/health") {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                status: "ok",
+                hasActiveClient: true,
+                frontend: `${frontendUrl}/`,
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          const result = await ensureInspector({
+            baseUrl,
+            openBrowser: true,
+            tab: "app-builder",
+          });
+
+          assert.deepEqual(result, {
+            baseUrl,
+            frontendUrl,
+            hasActiveClient: true,
+            url: `${frontendUrl}/#app-builder`,
+            started: false,
+          });
+        },
+      );
+    },
+  );
+});
+
+test("ensureInspector with explicit frontendUrl skips advertised frontend probes", async () => {
+  let advertisedRootRequests = 0;
+
+  await withServer(
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        advertisedRootRequests += 1;
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (advertisedFrontendUrl) => {
+      await withServer(
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/health") {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                status: "ok",
+                hasActiveClient: true,
+                frontend: `${advertisedFrontendUrl}/`,
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          const result = await ensureInspector({
+            baseUrl,
+            frontendUrl: "http://localhost:9/inspector/?debug=1#old",
+            openBrowser: false,
+            tab: "app-builder",
+          });
+
+          assert.equal(advertisedRootRequests, 0);
+          assert.deepEqual(result, {
+            baseUrl,
+            frontendUrl: "http://localhost:9/inspector",
+            hasActiveClient: true,
+            url: "http://localhost:9/inspector/#app-builder",
+            started: false,
+          });
+        },
+      );
+    },
+  );
+});
+
+test("ensureInspector allows active attach when health frontend is stale", async () => {
+  const staleFrontendUrl = "http://127.0.0.1:9";
+
   await withServer(
     (request, response) => {
       if (request.method === "GET" && request.url === "/health") {
@@ -291,9 +538,15 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
           JSON.stringify({
             status: "ok",
             hasActiveClient: true,
-            frontend: "http://localhost:5173/",
+            frontend: staleFrontendUrl,
           }),
         );
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ token: "ok" }));
         return;
       }
 
@@ -303,16 +556,307 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
     async (baseUrl) => {
       const result = await ensureInspector({
         baseUrl,
-        openBrowser: true,
+        openBrowser: false,
+        startIfNeeded: false,
         tab: "app-builder",
       });
 
-      assert.deepEqual(result, {
-        baseUrl,
-        frontendUrl: "http://localhost:5173",
-        url: "http://localhost:5173/#app-builder",
-        started: false,
-      });
+      assert.equal(result.hasActiveClient, true);
+      assert.equal(result.frontendUrl, staleFrontendUrl);
+      assert.equal(result.url, `${staleFrontendUrl}/#app-builder`);
+      assert.equal(result.started, false);
+    },
+  );
+});
+
+test("ensureInspector with skipDiscovery avoids nearby frontend port scans", async () => {
+  let nearbyRootRequests = 0;
+
+  await withServerOnAvailablePort(
+    [5181, 5182, 5183, 5184, 5185],
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        nearbyRootRequests += 1;
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      const frontendPort = Number(new URL(frontendUrl).port);
+      const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
+
+      await withServer(
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/health") {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                status: "ok",
+                hasActiveClient: true,
+                frontend: staleFrontendUrl,
+              }),
+            );
+            return;
+          }
+
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ token: "ok" }));
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          const result = await ensureInspector({
+            baseUrl,
+            openBrowser: false,
+            skipDiscovery: true,
+            tab: "app-builder",
+          });
+
+          assert.equal(nearbyRootRequests, 0);
+          assert.equal(result.frontendUrl, staleFrontendUrl);
+          assert.equal(result.url, `${staleFrontendUrl}/#app-builder`);
+          assert.equal(result.started, false);
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health is stale", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      await withServerOnAvailablePort(
+        [5181, 5182, 5183, 5184, 5185],
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/") {
+            response.writeHead(200, { "Content-Type": "text/html" });
+            response.end(INSPECTOR_FRONTEND_HTML);
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (frontendUrl) => {
+          const frontendPort = Number(new URL(frontendUrl).port);
+          // One-port stale hint depends on the resolver's frontend probe window.
+          const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
+
+          assert.equal(
+            await resolveInspectorBrowserBaseUrl(baseUrl, staleFrontendUrl),
+            frontendUrl,
+          );
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl prefers first usable discovered frontend deterministically", async () => {
+  await withServersOnConsecutiveAvailablePorts(
+    [5181, 5182, 5183, 5184],
+    [
+      (frontendRequest, frontendResponse) => {
+        if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+          frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+          frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+          return;
+        }
+
+        frontendResponse.writeHead(404);
+        frontendResponse.end();
+      },
+      (frontendRequest, frontendResponse) => {
+        if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+          frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+          frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+          return;
+        }
+
+        frontendResponse.writeHead(404);
+        frontendResponse.end();
+      },
+    ],
+    async ([firstFrontendUrl, secondFrontendUrl]) => {
+      const firstFrontendPort = Number(new URL(firstFrontendUrl).port);
+      const staleFrontendUrl = `http://127.0.0.1:${firstFrontendPort - 1}`;
+
+      await withServer(
+        (request, response) => {
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ token: "ok" }));
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          assert.equal(
+            await resolveInspectorBrowserBaseUrl(baseUrl, staleFrontendUrl),
+            firstFrontendUrl,
+          );
+          assert.notEqual(firstFrontendUrl, secondFrontendUrl);
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by backend", async () => {
+  await withServer(
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      await withServer(
+        (request, response) => {
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
+            response.writeHead(403, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                error: "Forbidden",
+                message: "Request origin not allowed.",
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          await assert.rejects(
+            () => resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl),
+            (error: unknown) => {
+              assert.ok(error instanceof Error);
+              assert.match(error.message, /frontend .* is reachable/i);
+              assert.doesNotMatch(
+                error.message,
+                /no Inspector frontend responded/i,
+              );
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
+                frontendUrl,
+              );
+              return true;
+            },
+          );
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend rejects its origin", async () => {
+  await withServerOnAvailablePort(
+    [5181, 5182, 5183, 5184, 5185],
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      const frontendPort = Number(new URL(frontendUrl).port);
+      // One-port stale hint depends on the resolver's frontend probe window.
+      const advertisedUrl = `http://127.0.0.1:${frontendPort - 1}`;
+
+      await withServer(
+        (request, response) => {
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
+            const origin = request.headers.origin;
+            if (origin === advertisedUrl) {
+              response.writeHead(200, { "Content-Type": "application/json" });
+              response.end(JSON.stringify({ token: "ok" }));
+              return;
+            }
+
+            response.writeHead(403, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                error: "Forbidden",
+                message: "Request origin not allowed.",
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          await assert.rejects(
+            () => resolveInspectorBrowserBaseUrl(baseUrl, advertisedUrl),
+            (error: unknown) => {
+              assert.ok(error instanceof Error);
+              assert.match(error.message, /Inspector backend advertises /);
+              assert.match(error.message, /frontend was found at /);
+              assert.match(error.message, /rejects that origin/);
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.advertisedFrontendUrl,
+                advertisedUrl,
+              );
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
+                frontendUrl,
+              );
+              assert.notEqual(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.advertisedFrontendUrl,
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
+              );
+              return true;
+            },
+          );
+        },
+      );
     },
   );
 });
