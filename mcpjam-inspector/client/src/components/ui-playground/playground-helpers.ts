@@ -31,9 +31,10 @@ export function createDeterministicToolMessages(
   params: Record<string, unknown>,
   result: unknown,
   toolMeta: Record<string, unknown> | undefined,
-  options?: DeterministicToolOptions,
+  options?: DeterministicToolOptions
 ): { messages: UIMessage[]; toolCallId: string } {
-  // Validate toolName
+  // Internal callers have already accepted the tool payload; this helper only
+  // guards the invariant needed to construct a valid message.
   if (!toolName?.trim()) {
     throw new Error("toolName is required");
   }
